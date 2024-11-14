@@ -1,0 +1,211 @@
+---
+title: "Model Assumptions"
+author: "Maureen Nzilani"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Modelling as Count Data
+
+Loading libraries 
+```{r}
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(tidyverse)
+library(knitr)
+library(leaflet)
+library(sp)
+library(sf)
+library(corrplot)
+library(ggplot2)
+library(rlang)
+library(gridExtra)
+library(patchwork)
+```
+Loading the datasets
+```{r}
+data<-read_xlsx("C:\\Users\\mnzilani\\Desktop\\Working Folder\\New Data\\Counts\\Counts.xlsx")
+# reading all sheets
+sheet_numbers <- 1:8  # Sheets 1 to 8
+
+# Read all the sheets (1 to 8) into a list
+all_sheets <- lapply(sheet_numbers, function(sheet) {
+  read_excel("C:\\Users\\mnzilani\\Desktop\\Working Folder\\New Data\\Counts\\Counts.xlsx", sheet = sheet)
+})
+# Name all the llags from the excel sheet
+names(all_sheets) <- paste0("Sheet", sheet_numbers)
+
+# Assign each sheet's data to a separate variable
+Lag1 <- all_sheets[[1]]  # Data from Lag 1
+Lag2 <- all_sheets[[2]]  # Data from Lag 2
+Lag3 <- all_sheets[[3]]  # Data from Lag 3
+Lag4 <- all_sheets[[4]]  # Data from lag 4
+Lag5 <- all_sheets[[5]]  # Data from lag 5
+Lag6 <- all_sheets[[6]]  # Data from lag 6
+Lag7 <- all_sheets[[7]]  # Data from lag 7
+Lag8 <- all_sheets[[8]]  # Data from lag 8
+
+head(Lag1)
+```
+Checking For Missing Values in all the Lgs
+```{r}
+#Count for missing values in each sheet
+count_missing_values <- function(data) {
+  sum(is.na(data))  # Count the total number of NA values in the sheet
+}
+
+# Apply the function to each sheet
+missing_values_count <- sapply(all_sheets, count_missing_values)
+
+# Print the missing values for each sheet
+missing_values_count
+```
+Getting summaries
+```{r}
+
+# Get the summary for Lag1
+summary_Lag1 <- summary(Lag1)
+summary_Lag1
+```
+Mapping the villages
+```{r}
+
+map <- leaflet(Lag1) %>%
+  addTiles() %>%
+  setView(lng = median(Lag1$lon), lat = median(Lag1$lat), zoom = 3)
+
+map <- map %>% 
+  addCircleMarkers(lng = Lag1$lon, 
+                   lat = Lag1$lat,
+                   radius = Lag1$Infections,
+                   popup = paste("Infections:", Lag1$Infections),
+                   fillOpacity = 0.7)
+
+map
+```
+
+Checking Model Assumptions
+```{r}
+#1. Checking for Correlations for the numeric variables
+# Select relevant columns for the correlation matrix
+correlation_data <- Lag1[, c("Infections", "distance",  "tempmin", "tempmax", 
+                             "mean_temp", "mean_humidity", "total_precip", "population_density", 
+                             "Distance_to_Water_.km.", "forest_height", "Elevation", "LULC")]
+
+# Calculate the correlation matrix
+cor_matrix <- cor(correlation_data, use = "complete.obs", method = "spearman")
+
+# Print the correlation matrix
+#print(cor_matrix)
+
+# Visualize the correlation matrix with correlation values inside the plot
+corrplot(cor_matrix, 
+         method = "color", 
+         type = "full", 
+         tl.col = "black", 
+         tl.srt = 13, 
+         addCoef.col = "black")
+#Notes: Tempmax,tempmin,mean temp are heavily correlated with each other.
+#Elevations is also strongly correlated with Tempmax,tempmin and mean temp
+#Distance to water bodeis has a moderate correlation with Tempmax,tempmin,mean temp
+
+```
+
+Checking assumptions for possible count models: Poission, negative binomial, zero inflated models
+```{r}
+#For possion
+#The response variable is a count
+#Independence The observations must be independent of one another.
+#Mean=Variance
+#Linearity The log of the mean rate, log( λ ), must be a linear function of x.
+
+# Calculate the mean of the infections
+mean1 <- mean(Lag1$Infections, na.rm = TRUE)
+
+print(mean1)
+
+# Calculate the variance of the infections
+variance1 <- var(Lag1$Infections, na.rm = TRUE)
+print(variance1)
+
+
+#Conclusion Poisson assumptions:mean=variance assumption violated mean>variance(under dispersion) {fit a possion model with log link}
+#negative binomial assumption for over dispersion violated
+
+```
+
+Modelling as Individual cases
+
+Loading necessary libraries
+```{r}
+library(dplyr)
+library(tidyr)
+library(INLA)
+library(ggplot2)
+library(Metrics)
+library(sp)
+library(spdep)
+```
+
+Fitting a Logistic regression and checking if the residuals have spatial autocorrelation
+```{r}
+dr<-read.csv("C:\\Users\\mnzilani\\Desktop\\Working Folder\\New Data\\Lags\\L3.csv")
+dr <- dr %>%
+  mutate(age_group = case_when(
+    AGE >= 0 & AGE <= 4 ~ "0-4 years",
+    AGE >= 4.01 & AGE <= 19 ~ "5-19 years",
+    AGE >= 20 & AGE <= 60 ~ "20-60 years",
+    AGE > 60 ~ "60 and above years"
+  ))
+modellogistic <- glm(Infections ~ SEX+Distance_to_Water_.km. + population_density + forest_height +
+                       tempmin + mean_humidity + total_precip  + age_group+ distance+Distance_to_Water_.km., 
+                     data = dr, family = binomial)
+summary(modellogistic)
+summary(modellogistic$residuals)
+hist(modellogistic$residuals, main = "Histogram of Residuals", xlab = "Residuals")
+# Add jitter to lat and lon 
+dr <- dr %>%
+  mutate(
+    lat_jittered = lat + runif(n(), -1e-5, 1e-5),
+    lon_jittered = lon + runif(n(), -1e-5, 1e-5)
+  )
+
+coordinates(dr) <- ~lon_jittered + lat_jittered   
+# apply k-nearest neighbors 
+neighbors <- knn2nb(knearneigh(coordinates(dr), k=4))
+listw <- nb2listw(neighbors, style="W")
+# Calculate Moran's I for the residuals
+residuals <- residuals(modellogistic, type = "response")
+moran_test <- moran.test(residuals, listw)
+
+# Print the Moran's I test results
+print(moran_test)
+```
+
+Checking for Spatial autocorrelation in Infections
+```{r}
+dr1<-read.csv("C:\\Users\\mnzilani\\Desktop\\Working Folder\\New Data\\Lags\\L3.csv")
+dr1 <- dr1 %>%
+  mutate(
+    lat_jittered = lat + runif(n(), -1e-5, 1e-5),
+    lon_jittered = lon + runif(n(), -1e-5, 1e-5)
+  )
+
+# Define coordinates 
+coords <- cbind(dr1$lat_jittered, dr1$lon_jittered)
+# Apply the knearneigh 
+nb <- knn2nb(knearneigh(coords, k = 4))
+listw <- nb2listw(nb, style = "W")
+
+# Calculate Moran's I for spatial autocorrelation
+moran_test <- moran.test(dr1$Infections,listw)
+
+# Display the results
+moran_test
+```
+## there is spatial autocorrelation in the residuals of the model and in infections

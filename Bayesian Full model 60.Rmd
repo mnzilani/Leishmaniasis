@@ -1,0 +1,1113 @@
+---
+title: "Bayesian Full Model 60"
+author: "Maureen Nzilani"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Loading neccessary Libraries
+````{r}
+library(dplyr)
+library(tidyr)
+library(INLA)
+library(ggplot2)
+library(Metrics)
+library(sp)
+library(caret)
+library(pROC)
+library(readxl)
+````
+
+Lag 1
+````{r}
+df<-read.csv("C:\\Users\\mnzilani\\Desktop\\Working Folder\\New Data\\Lags\\L1.csv")
+
+
+# Create age group variable
+df <- df %>%
+ mutate(age_group = case_when(
+    AGE >= 0 & AGE <= 5~ "0-5 years",
+    AGE >= 5.01 & AGE <= 18 ~ "6-18 years",
+    AGE >= 18.01 & AGE <= 30 ~ "19-30 years",
+    AGE >= 30.01 & AGE <= 44 ~ "31-44 years",
+    AGE > 44.01 ~ " 45 years and above"
+  ))
+
+# Add jitter to lat and lon
+df <- df %>%
+  mutate(
+    lat_jittered = lat + runif(n(), -1e-5, 1e-5),
+    lon_jittered = lon + runif(n(), -1e-5, 1e-5)
+  )
+
+df$age_group <- as.factor(df$age_group)
+df$SEX <- as.factor(df$SEX)
+
+# Define coordinates 
+coords <- cbind(df$lat_jittered, df$lon_jittered)
+# Set seed for reproducibility
+set.seed(123)
+
+# Split the data into training (80%) and testing (20%) sets
+trainIndex <- createDataPartition(df$Infections, p = .8, list = FALSE, times = 1)
+trainData <- df[trainIndex,]
+testData <- df[-trainIndex,]
+
+# Split coordinates accordingly
+trainCoords <- coords[trainIndex, ]
+testCoords <- coords[-trainIndex, ]
+
+# Build the mesh for the training data
+mesh_train <- inla.mesh.2d(loc = trainCoords, max.edge = c(0.5, 2), cutoff = 0.1)
+plot(mesh_train)
+# Add points to the plot
+points(trainCoords, col = "red", pch = 19)
+
+spde_train <- inla.spde2.matern(mesh = mesh_train, alpha = 2)
+
+# Generate index set for the mesh using training coordinates
+A_train <- inla.spde.make.A(mesh_train, loc = trainCoords)
+spde_index_train <- inla.spde.make.index(name = "spatial", n.spde = spde_train$n.spde)
+
+# Stack the training data
+stack_train <- inla.stack(
+  data = list(y = trainData$Infections),
+  A = list(A_train, 1),
+  effects = list(spde_index_train, list(trainData))
+)
+
+# Define the formula
+formula <- y ~ SEX + distance + age_group + tempmin + NDVI +
+  mean_humidity + total_precip + population_density + Distance_to_Water_.km. +
+  forest_height + LULC + f(spatial, model = spde_train) + f(month, model = "iid")
+
+# Fit the model on the training data
+result_train <- inla(formula, family = "binomial", 
+                     data = inla.stack.data(stack_train),
+                     control.predictor = list(A = inla.stack.A(stack_train)),
+                     control.compute = list(dic = TRUE, waic = TRUE))
+
+# View results
+summary(result_train)
+
+# Add jitter to lat and lon for the test data
+testData <- testData %>%
+  mutate(
+    lat_jittered = lat + runif(n(), -1e-5, 1e-5),
+    lon_jittered = lon + runif(n(), -1e-5, 1e-5)
+  )
+
+# Create coordinates for the test data
+testCoords <- cbind(testData$lat_jittered, testData$lon_jittered)
+
+# Create the A matrix for the test data using the mesh from the training data
+A_test <- inla.spde.make.A(mesh_train, loc = testCoords)
+
+# Stack the test data
+stack_test <- inla.stack(
+  data = list(y = testData$Infections),
+  A = list(A_test, 1),
+  effects = list(spde_index_train, list(testData))
+)
+
+# Predict on test data using the model from training
+result_test <- inla(formula, family = "binomial", 
+                    data = inla.stack.data(stack_test),
+                    control.predictor = list(A = inla.stack.A(stack_test), compute = TRUE),
+                    control.compute = list(dic = TRUE, waic = TRUE))
+
+# Extract predicted probabilities for test data
+predictions_test <- result_test$summary.fitted.values[1:nrow(testData), "mean"]
+
+# Convert predicted probabilities to binary outcomes for test data
+predicted_classes_test <- ifelse(predictions_test > 0.5, 1, 0)
+
+# Calculate confusion matrix for test data
+conf_matrix_test <- table(Predicted = predicted_classes_test, Actual = testData$Infections)
+
+# Calculate accuracy, precision, and recall for test data
+accuracy_test <- sum(diag(conf_matrix_test)) / sum(conf_matrix_test)
+precision_test <- conf_matrix_test[2, 2] / sum(conf_matrix_test[2, ])  
+recall_test <- conf_matrix_test[2, 2] / sum(conf_matrix_test[, 2])  
+
+# Print results for test data
+cat("Test Confusion Matrix:\n")
+print(conf_matrix_test)
+cat("\nTest Accuracy: ", accuracy_test, "\n")
+cat("Test Precision: ", precision_test, "\n")
+cat("Test Recall: ", recall_test, "\n")
+
+# Create ROC object for test data
+roc_obj_test <- roc(testData$Infections, predictions_test)
+
+# Calculate AUC for test data
+auc_val_test <- auc(roc_obj_test)
+
+# Print AUC for test data
+cat("Test AUC: ", auc_val_test, "\n")
+
+# Plot ROC curve for test data
+plot(roc_obj_test, 
+     main = paste("ROC Curve (AUC =", round(auc_val_test, 2), ")"),
+     col = "blue", 
+     lwd = 2)
+
+````
+
+
+Lag 2
+````{r}
+df<-read.csv("C:\\Users\\mnzilani\\Desktop\\Working Folder\\New Data\\Lags\\L2.csv")
+
+
+# Create age group variable
+df <- df %>%
+ mutate(age_group = case_when(
+    AGE >= 0 & AGE <= 5~ "0-5 years",
+    AGE >= 5.01 & AGE <= 18 ~ "6-18 years",
+    AGE >= 18.01 & AGE <= 30 ~ "19-30 years",
+    AGE >= 30.01 & AGE <= 44 ~ "31-44 years",
+    AGE > 44.01 ~ " 45 years and above"
+  ))
+
+# Add jitter to lat and lon
+df <- df %>%
+  mutate(
+    lat_jittered = lat + runif(n(), -1e-5, 1e-5),
+    lon_jittered = lon + runif(n(), -1e-5, 1e-5)
+  )
+
+df$age_group <- as.factor(df$age_group)
+df$SEX <- as.factor(df$SEX)
+
+# Define coordinates 
+coords <- cbind(df$lat_jittered, df$lon_jittered)
+# Set seed for reproducibility
+set.seed(123)
+
+# Split the data into training (80%) and testing (20%) sets
+trainIndex <- createDataPartition(df$Infections, p = .8, list = FALSE, times = 1)
+trainData <- df[trainIndex,]
+testData <- df[-trainIndex,]
+
+# Split coordinates accordingly
+trainCoords <- coords[trainIndex, ]
+testCoords <- coords[-trainIndex, ]
+
+# Build the mesh for the training data
+mesh_train <- inla.mesh.2d(loc = trainCoords, max.edge = c(0.5, 2), cutoff = 0.1)
+plot(mesh_train)
+# Add points to the plot
+points(trainCoords, col = "red", pch = 19)
+
+spde_train <- inla.spde2.matern(mesh = mesh_train, alpha = 2)
+
+# Generate index set for the mesh using training coordinates
+A_train <- inla.spde.make.A(mesh_train, loc = trainCoords)
+spde_index_train <- inla.spde.make.index(name = "spatial", n.spde = spde_train$n.spde)
+
+# Stack the training data
+stack_train <- inla.stack(
+  data = list(y = trainData$Infections),
+  A = list(A_train, 1),
+  effects = list(spde_index_train, list(trainData))
+)
+
+# Define the formula
+formula <- y ~ SEX + distance + age_group + tempmin + NDVI +
+  mean_humidity + total_precip + population_density + Distance_to_Water_.km. +
+  forest_height + LULC + f(spatial, model = spde_train) + f(month, model = "iid")
+
+# Fit the model on the training data
+result_train <- inla(formula, family = "binomial", 
+                     data = inla.stack.data(stack_train),
+                     control.predictor = list(A = inla.stack.A(stack_train)),
+                     control.compute = list(dic = TRUE, waic = TRUE))
+
+# View results
+summary(result_train)
+
+# Add jitter to lat and lon for the test data
+testData <- testData %>%
+  mutate(
+    lat_jittered = lat + runif(n(), -1e-5, 1e-5),
+    lon_jittered = lon + runif(n(), -1e-5, 1e-5)
+  )
+
+# Create coordinates for the test data
+testCoords <- cbind(testData$lat_jittered, testData$lon_jittered)
+
+# Create the A matrix for the test data using the mesh from the training data
+A_test <- inla.spde.make.A(mesh_train, loc = testCoords)
+
+# Stack the test data
+stack_test <- inla.stack(
+  data = list(y = testData$Infections),
+  A = list(A_test, 1),
+  effects = list(spde_index_train, list(testData))
+)
+
+# Predict on test data using the model from training
+result_test <- inla(formula, family = "binomial", 
+                    data = inla.stack.data(stack_test),
+                    control.predictor = list(A = inla.stack.A(stack_test), compute = TRUE),
+                    control.compute = list(dic = TRUE, waic = TRUE))
+
+# Extract predicted probabilities for test data
+predictions_test <- result_test$summary.fitted.values[1:nrow(testData), "mean"]
+
+# Convert predicted probabilities to binary outcomes for test data
+predicted_classes_test <- ifelse(predictions_test > 0.5, 1, 0)
+
+# Calculate confusion matrix for test data
+conf_matrix_test <- table(Predicted = predicted_classes_test, Actual = testData$Infections)
+
+# Calculate accuracy, precision, and recall for test data
+accuracy_test <- sum(diag(conf_matrix_test)) / sum(conf_matrix_test)
+precision_test <- conf_matrix_test[2, 2] / sum(conf_matrix_test[2, ])  
+recall_test <- conf_matrix_test[2, 2] / sum(conf_matrix_test[, 2])  
+
+# Print results for test data
+cat("Test Confusion Matrix:\n")
+print(conf_matrix_test)
+cat("\nTest Accuracy: ", accuracy_test, "\n")
+cat("Test Precision: ", precision_test, "\n")
+cat("Test Recall: ", recall_test, "\n")
+
+# Create ROC object for test data
+roc_obj_test <- roc(testData$Infections, predictions_test)
+
+# Calculate AUC for test data
+auc_val_test <- auc(roc_obj_test)
+
+# Print AUC for test data
+cat("Test AUC: ", auc_val_test, "\n")
+
+# Plot ROC curve for test data
+plot(roc_obj_test, 
+     main = paste("ROC Curve (AUC =", round(auc_val_test, 2), ")"),
+     col = "blue", 
+     lwd = 2)
+
+````
+
+Lag 3
+````{r}
+df<-read.csv("C:\\Users\\mnzilani\\Desktop\\Working Folder\\New Data\\Lags\\L3.csv")
+
+
+# Create age group variable
+df <- df %>%
+ mutate(age_group = case_when(
+    AGE >= 0 & AGE <= 5~ "0-5 years",
+    AGE >= 5.01 & AGE <= 18 ~ "6-18 years",
+    AGE >= 18.01 & AGE <= 30 ~ "19-30 years",
+    AGE >= 30.01 & AGE <= 44 ~ "31-44 years",
+    AGE > 44.01 ~ " 45 years and above"
+  ))
+
+# Add jitter to lat and lon
+df <- df %>%
+  mutate(
+    lat_jittered = lat + runif(n(), -1e-5, 1e-5),
+    lon_jittered = lon + runif(n(), -1e-5, 1e-5)
+  )
+
+df$age_group <- as.factor(df$age_group)
+df$SEX <- as.factor(df$SEX)
+
+# Define coordinates 
+coords <- cbind(df$lat_jittered, df$lon_jittered)
+# Set seed for reproducibility
+set.seed(123)
+
+# Split the data into training (80%) and testing (20%) sets
+trainIndex <- createDataPartition(df$Infections, p = .8, list = FALSE, times = 1)
+trainData <- df[trainIndex,]
+testData <- df[-trainIndex,]
+
+# Split coordinates accordingly
+trainCoords <- coords[trainIndex, ]
+testCoords <- coords[-trainIndex, ]
+
+# Build the mesh for the training data
+mesh_train <- inla.mesh.2d(loc = trainCoords, max.edge = c(0.5, 2), cutoff = 0.1)
+plot(mesh_train)
+# Add points to the plot
+points(trainCoords, col = "red", pch = 19)
+
+spde_train <- inla.spde2.matern(mesh = mesh_train, alpha = 2)
+
+# Generate index set for the mesh using training coordinates
+A_train <- inla.spde.make.A(mesh_train, loc = trainCoords)
+spde_index_train <- inla.spde.make.index(name = "spatial", n.spde = spde_train$n.spde)
+
+# Stack the training data
+stack_train <- inla.stack(
+  data = list(y = trainData$Infections),
+  A = list(A_train, 1),
+  effects = list(spde_index_train, list(trainData))
+)
+
+# Define the formula
+formula <- y ~ SEX + distance + age_group + tempmin + NDVI +
+  mean_humidity + total_precip + population_density + Distance_to_Water_.km. +
+  forest_height + LULC + f(spatial, model = spde_train) + f(month, model = "iid")
+
+# Fit the model on the training data
+result_train <- inla(formula, family = "binomial", 
+                     data = inla.stack.data(stack_train),
+                     control.predictor = list(A = inla.stack.A(stack_train)),
+                     control.compute = list(dic = TRUE, waic = TRUE))
+
+# View results
+summary(result_train)
+
+# Add jitter to lat and lon for the test data
+testData <- testData %>%
+  mutate(
+    lat_jittered = lat + runif(n(), -1e-5, 1e-5),
+    lon_jittered = lon + runif(n(), -1e-5, 1e-5)
+  )
+
+# Create coordinates for the test data
+testCoords <- cbind(testData$lat_jittered, testData$lon_jittered)
+
+# Create the A matrix for the test data using the mesh from the training data
+A_test <- inla.spde.make.A(mesh_train, loc = testCoords)
+
+# Stack the test data
+stack_test <- inla.stack(
+  data = list(y = testData$Infections),
+  A = list(A_test, 1),
+  effects = list(spde_index_train, list(testData))
+)
+
+# Predict on test data using the model from training
+result_test <- inla(formula, family = "binomial", 
+                    data = inla.stack.data(stack_test),
+                    control.predictor = list(A = inla.stack.A(stack_test), compute = TRUE),
+                    control.compute = list(dic = TRUE, waic = TRUE))
+
+# Extract predicted probabilities for test data
+predictions_test <- result_test$summary.fitted.values[1:nrow(testData), "mean"]
+
+# Convert predicted probabilities to binary outcomes for test data
+predicted_classes_test <- ifelse(predictions_test > 0.5, 1, 0)
+
+# Calculate confusion matrix for test data
+conf_matrix_test <- table(Predicted = predicted_classes_test, Actual = testData$Infections)
+
+# Calculate accuracy, precision, and recall for test data
+accuracy_test <- sum(diag(conf_matrix_test)) / sum(conf_matrix_test)
+precision_test <- conf_matrix_test[2, 2] / sum(conf_matrix_test[2, ])  
+recall_test <- conf_matrix_test[2, 2] / sum(conf_matrix_test[, 2])  
+
+# Print results for test data
+cat("Test Confusion Matrix:\n")
+print(conf_matrix_test)
+cat("\nTest Accuracy: ", accuracy_test, "\n")
+cat("Test Precision: ", precision_test, "\n")
+cat("Test Recall: ", recall_test, "\n")
+
+# Create ROC object for test data
+roc_obj_test <- roc(testData$Infections, predictions_test)
+
+# Calculate AUC for test data
+auc_val_test <- auc(roc_obj_test)
+
+# Print AUC for test data
+cat("Test AUC: ", auc_val_test, "\n")
+
+# Plot ROC curve for test data
+plot(roc_obj_test, 
+     main = paste("ROC Curve (AUC =", round(auc_val_test, 2), ")"),
+     col = "blue", 
+     lwd = 2)
+
+````
+
+Lag 4
+````{r}
+df<-read.csv("C:\\Users\\mnzilani\\Desktop\\Working Folder\\New Data\\Lags\\L4.csv")
+
+
+# Create age group variable
+df <- df %>%
+ mutate(age_group = case_when(
+    AGE >= 0 & AGE <= 5~ "0-5 years",
+    AGE >= 5.01 & AGE <= 18 ~ "6-18 years",
+    AGE >= 18.01 & AGE <= 30 ~ "19-30 years",
+    AGE >= 30.01 & AGE <= 44 ~ "31-44 years",
+    AGE > 44.01 ~ " 45 years and above"
+  ))
+
+# Add jitter to lat and lon
+df <- df %>%
+  mutate(
+    lat_jittered = lat + runif(n(), -1e-5, 1e-5),
+    lon_jittered = lon + runif(n(), -1e-5, 1e-5)
+  )
+
+df$age_group <- as.factor(df$age_group)
+df$SEX <- as.factor(df$SEX)
+
+# Define coordinates 
+coords <- cbind(df$lat_jittered, df$lon_jittered)
+# Set seed for reproducibility
+set.seed(123)
+
+# Split the data into training (80%) and testing (20%) sets
+trainIndex <- createDataPartition(df$Infections, p = .8, list = FALSE, times = 1)
+trainData <- df[trainIndex,]
+testData <- df[-trainIndex,]
+
+# Split coordinates accordingly
+trainCoords <- coords[trainIndex, ]
+testCoords <- coords[-trainIndex, ]
+
+# Build the mesh for the training data
+mesh_train <- inla.mesh.2d(loc = trainCoords, max.edge = c(0.5, 2), cutoff = 0.1)
+plot(mesh_train)
+# Add points to the plot
+points(trainCoords, col = "red", pch = 19)
+
+spde_train <- inla.spde2.matern(mesh = mesh_train, alpha = 2)
+
+# Generate index set for the mesh using training coordinates
+A_train <- inla.spde.make.A(mesh_train, loc = trainCoords)
+spde_index_train <- inla.spde.make.index(name = "spatial", n.spde = spde_train$n.spde)
+
+# Stack the training data
+stack_train <- inla.stack(
+  data = list(y = trainData$Infections),
+  A = list(A_train, 1),
+  effects = list(spde_index_train, list(trainData))
+)
+
+# Define the formula
+formula <- y ~ SEX + distance + age_group + tempmin + NDVI +
+  mean_humidity + total_precip + population_density + Distance_to_Water_.km. +
+  forest_height + LULC + f(spatial, model = spde_train) + f(month, model = "iid")
+
+# Fit the model on the training data
+result_train <- inla(formula, family = "binomial", 
+                     data = inla.stack.data(stack_train),
+                     control.predictor = list(A = inla.stack.A(stack_train)),
+                     control.compute = list(dic = TRUE, waic = TRUE))
+
+# View results
+summary(result_train)
+
+# Add jitter to lat and lon for the test data
+testData <- testData %>%
+  mutate(
+    lat_jittered = lat + runif(n(), -1e-5, 1e-5),
+    lon_jittered = lon + runif(n(), -1e-5, 1e-5)
+  )
+
+# Create coordinates for the test data
+testCoords <- cbind(testData$lat_jittered, testData$lon_jittered)
+
+# Create the A matrix for the test data using the mesh from the training data
+A_test <- inla.spde.make.A(mesh_train, loc = testCoords)
+
+# Stack the test data
+stack_test <- inla.stack(
+  data = list(y = testData$Infections),
+  A = list(A_test, 1),
+  effects = list(spde_index_train, list(testData))
+)
+
+# Predict on test data using the model from training
+result_test <- inla(formula, family = "binomial", 
+                    data = inla.stack.data(stack_test),
+                    control.predictor = list(A = inla.stack.A(stack_test), compute = TRUE),
+                    control.compute = list(dic = TRUE, waic = TRUE))
+
+# Extract predicted probabilities for test data
+predictions_test <- result_test$summary.fitted.values[1:nrow(testData), "mean"]
+
+# Convert predicted probabilities to binary outcomes for test data
+predicted_classes_test <- ifelse(predictions_test > 0.5, 1, 0)
+
+# Calculate confusion matrix for test data
+conf_matrix_test <- table(Predicted = predicted_classes_test, Actual = testData$Infections)
+
+# Calculate accuracy, precision, and recall for test data
+accuracy_test <- sum(diag(conf_matrix_test)) / sum(conf_matrix_test)
+precision_test <- conf_matrix_test[2, 2] / sum(conf_matrix_test[2, ])  
+recall_test <- conf_matrix_test[2, 2] / sum(conf_matrix_test[, 2])  
+
+# Print results for test data
+cat("Test Confusion Matrix:\n")
+print(conf_matrix_test)
+cat("\nTest Accuracy: ", accuracy_test, "\n")
+cat("Test Precision: ", precision_test, "\n")
+cat("Test Recall: ", recall_test, "\n")
+
+# Create ROC object for test data
+roc_obj_test <- roc(testData$Infections, predictions_test)
+
+# Calculate AUC for test data
+auc_val_test <- auc(roc_obj_test)
+
+# Print AUC for test data
+cat("Test AUC: ", auc_val_test, "\n")
+
+# Plot ROC curve for test data
+plot(roc_obj_test, 
+     main = paste("ROC Curve (AUC =", round(auc_val_test, 2), ")"),
+     col = "blue", 
+     lwd = 2)
+
+````
+
+Lag 5
+````{r}
+df<-read.csv("C:\\Users\\mnzilani\\Desktop\\Working Folder\\New Data\\Lags\\L5.csv")
+
+
+# Create age group variable
+df <- df %>%
+ mutate(age_group = case_when(
+    AGE >= 0 & AGE <= 5~ "0-5 years",
+    AGE >= 5.01 & AGE <= 18 ~ "6-18 years",
+    AGE >= 18.01 & AGE <= 30 ~ "19-30 years",
+    AGE >= 30.01 & AGE <= 44 ~ "31-44 years",
+    AGE > 44.01 ~ " 45 years and above"
+  ))
+
+# Add jitter to lat and lon
+df <- df %>%
+  mutate(
+    lat_jittered = lat + runif(n(), -1e-5, 1e-5),
+    lon_jittered = lon + runif(n(), -1e-5, 1e-5)
+  )
+
+df$age_group <- as.factor(df$age_group)
+df$SEX <- as.factor(df$SEX)
+
+# Define coordinates 
+coords <- cbind(df$lat_jittered, df$lon_jittered)
+# Set seed for reproducibility
+set.seed(123)
+
+# Split the data into training (80%) and testing (20%) sets
+trainIndex <- createDataPartition(df$Infections, p = .8, list = FALSE, times = 1)
+trainData <- df[trainIndex,]
+testData <- df[-trainIndex,]
+
+# Split coordinates accordingly
+trainCoords <- coords[trainIndex, ]
+testCoords <- coords[-trainIndex, ]
+
+# Build the mesh for the training data
+mesh_train <- inla.mesh.2d(loc = trainCoords, max.edge = c(0.5, 2), cutoff = 0.1)
+plot(mesh_train)
+# Add points to the plot
+points(trainCoords, col = "red", pch = 19)
+
+spde_train <- inla.spde2.matern(mesh = mesh_train, alpha = 2)
+
+# Generate index set for the mesh using training coordinates
+A_train <- inla.spde.make.A(mesh_train, loc = trainCoords)
+spde_index_train <- inla.spde.make.index(name = "spatial", n.spde = spde_train$n.spde)
+
+# Stack the training data
+stack_train <- inla.stack(
+  data = list(y = trainData$Infections),
+  A = list(A_train, 1),
+  effects = list(spde_index_train, list(trainData))
+)
+
+# Define the formula
+formula <- y ~ SEX + distance + age_group + tempmin + NDVI +
+  mean_humidity + total_precip + population_density + Distance_to_Water_.km. +
+  forest_height + LULC + f(spatial, model = spde_train) + f(month, model = "iid")
+
+# Fit the model on the training data
+result_train <- inla(formula, family = "binomial", 
+                     data = inla.stack.data(stack_train),
+                     control.predictor = list(A = inla.stack.A(stack_train)),
+                     control.compute = list(dic = TRUE, waic = TRUE))
+
+# View results
+summary(result_train)
+
+# Add jitter to lat and lon for the test data
+testData <- testData %>%
+  mutate(
+    lat_jittered = lat + runif(n(), -1e-5, 1e-5),
+    lon_jittered = lon + runif(n(), -1e-5, 1e-5)
+  )
+
+# Create coordinates for the test data
+testCoords <- cbind(testData$lat_jittered, testData$lon_jittered)
+
+# Create the A matrix for the test data using the mesh from the training data
+A_test <- inla.spde.make.A(mesh_train, loc = testCoords)
+
+# Stack the test data
+stack_test <- inla.stack(
+  data = list(y = testData$Infections),
+  A = list(A_test, 1),
+  effects = list(spde_index_train, list(testData))
+)
+
+# Predict on test data using the model from training
+result_test <- inla(formula, family = "binomial", 
+                    data = inla.stack.data(stack_test),
+                    control.predictor = list(A = inla.stack.A(stack_test), compute = TRUE),
+                    control.compute = list(dic = TRUE, waic = TRUE))
+
+# Extract predicted probabilities for test data
+predictions_test <- result_test$summary.fitted.values[1:nrow(testData), "mean"]
+
+# Convert predicted probabilities to binary outcomes for test data
+predicted_classes_test <- ifelse(predictions_test > 0.5, 1, 0)
+
+# Calculate confusion matrix for test data
+conf_matrix_test <- table(Predicted = predicted_classes_test, Actual = testData$Infections)
+
+# Calculate accuracy, precision, and recall for test data
+accuracy_test <- sum(diag(conf_matrix_test)) / sum(conf_matrix_test)
+precision_test <- conf_matrix_test[2, 2] / sum(conf_matrix_test[2, ])  
+recall_test <- conf_matrix_test[2, 2] / sum(conf_matrix_test[, 2])  
+
+# Print results for test data
+cat("Test Confusion Matrix:\n")
+print(conf_matrix_test)
+cat("\nTest Accuracy: ", accuracy_test, "\n")
+cat("Test Precision: ", precision_test, "\n")
+cat("Test Recall: ", recall_test, "\n")
+
+# Create ROC object for test data
+roc_obj_test <- roc(testData$Infections, predictions_test)
+
+# Calculate AUC for test data
+auc_val_test <- auc(roc_obj_test)
+
+# Print AUC for test data
+cat("Test AUC: ", auc_val_test, "\n")
+
+# Plot ROC curve for test data
+plot(roc_obj_test, 
+     main = paste("ROC Curve (AUC =", round(auc_val_test, 2), ")"),
+     col = "blue", 
+     lwd = 2)
+
+````
+
+
+Lag 6
+````{r}
+df<-read.csv("C:\\Users\\mnzilani\\Desktop\\Working Folder\\New Data\\Lags\\L6.csv")
+
+
+# Create age group variable
+df <- df %>%
+ mutate(age_group = case_when(
+    AGE >= 0 & AGE <= 5~ "0-5 years",
+    AGE >= 5.01 & AGE <= 18 ~ "6-18 years",
+    AGE >= 18.01 & AGE <= 30 ~ "19-30 years",
+    AGE >= 30.01 & AGE <= 44 ~ "31-44 years",
+    AGE > 44.01 ~ " 45 years and above"
+  ))
+
+# Add jitter to lat and lon
+df <- df %>%
+  mutate(
+    lat_jittered = lat + runif(n(), -1e-5, 1e-5),
+    lon_jittered = lon + runif(n(), -1e-5, 1e-5)
+  )
+
+df$age_group <- as.factor(df$age_group)
+df$SEX <- as.factor(df$SEX)
+
+# Define coordinates 
+coords <- cbind(df$lat_jittered, df$lon_jittered)
+# Set seed for reproducibility
+set.seed(123)
+
+# Split the data into training (80%) and testing (20%) sets
+trainIndex <- createDataPartition(df$Infections, p = .8, list = FALSE, times = 1)
+trainData <- df[trainIndex,]
+testData <- df[-trainIndex,]
+
+# Split coordinates accordingly
+trainCoords <- coords[trainIndex, ]
+testCoords <- coords[-trainIndex, ]
+
+# Build the mesh for the training data
+mesh_train <- inla.mesh.2d(loc = trainCoords, max.edge = c(0.5, 2), cutoff = 0.1)
+plot(mesh_train)
+# Add points to the plot
+points(trainCoords, col = "red", pch = 19)
+
+spde_train <- inla.spde2.matern(mesh = mesh_train, alpha = 2)
+
+# Generate index set for the mesh using training coordinates
+A_train <- inla.spde.make.A(mesh_train, loc = trainCoords)
+spde_index_train <- inla.spde.make.index(name = "spatial", n.spde = spde_train$n.spde)
+
+# Stack the training data
+stack_train <- inla.stack(
+  data = list(y = trainData$Infections),
+  A = list(A_train, 1),
+  effects = list(spde_index_train, list(trainData))
+)
+
+# Define the formula
+formula <- y ~ SEX + distance + age_group + tempmin + NDVI +
+  mean_humidity + total_precip + population_density + Distance_to_Water_.km. +
+  forest_height + LULC + f(spatial, model = spde_train) + f(month, model = "iid")
+
+# Fit the model on the training data
+result_train <- inla(formula, family = "binomial", 
+                     data = inla.stack.data(stack_train),
+                     control.predictor = list(A = inla.stack.A(stack_train)),
+                     control.compute = list(dic = TRUE, waic = TRUE))
+
+# View results
+summary(result_train)
+
+# Add jitter to lat and lon for the test data
+testData <- testData %>%
+  mutate(
+    lat_jittered = lat + runif(n(), -1e-5, 1e-5),
+    lon_jittered = lon + runif(n(), -1e-5, 1e-5)
+  )
+
+# Create coordinates for the test data
+testCoords <- cbind(testData$lat_jittered, testData$lon_jittered)
+
+# Create the A matrix for the test data using the mesh from the training data
+A_test <- inla.spde.make.A(mesh_train, loc = testCoords)
+
+# Stack the test data
+stack_test <- inla.stack(
+  data = list(y = testData$Infections),
+  A = list(A_test, 1),
+  effects = list(spde_index_train, list(testData))
+)
+
+# Predict on test data using the model from training
+result_test <- inla(formula, family = "binomial", 
+                    data = inla.stack.data(stack_test),
+                    control.predictor = list(A = inla.stack.A(stack_test), compute = TRUE),
+                    control.compute = list(dic = TRUE, waic = TRUE))
+
+# Extract predicted probabilities for test data
+predictions_test <- result_test$summary.fitted.values[1:nrow(testData), "mean"]
+
+# Convert predicted probabilities to binary outcomes for test data
+predicted_classes_test <- ifelse(predictions_test > 0.5, 1, 0)
+
+# Calculate confusion matrix for test data
+conf_matrix_test <- table(Predicted = predicted_classes_test, Actual = testData$Infections)
+
+# Calculate accuracy, precision, and recall for test data
+accuracy_test <- sum(diag(conf_matrix_test)) / sum(conf_matrix_test)
+precision_test <- conf_matrix_test[2, 2] / sum(conf_matrix_test[2, ])  
+recall_test <- conf_matrix_test[2, 2] / sum(conf_matrix_test[, 2])  
+
+# Print results for test data
+cat("Test Confusion Matrix:\n")
+print(conf_matrix_test)
+cat("\nTest Accuracy: ", accuracy_test, "\n")
+cat("Test Precision: ", precision_test, "\n")
+cat("Test Recall: ", recall_test, "\n")
+
+# Create ROC object for test data
+roc_obj_test <- roc(testData$Infections, predictions_test)
+
+# Calculate AUC for test data
+auc_val_test <- auc(roc_obj_test)
+
+# Print AUC for test data
+cat("Test AUC: ", auc_val_test, "\n")
+
+# Plot ROC curve for test data
+plot(roc_obj_test, 
+     main = paste("ROC Curve (AUC =", round(auc_val_test, 2), ")"),
+     col = "blue", 
+     lwd = 2)
+
+````
+
+Lag 7
+````{r}
+df<-read.csv("C:\\Users\\mnzilani\\Desktop\\Working Folder\\New Data\\Lags\\L7.csv")
+
+
+# Create age group variable
+df <- df %>%
+ mutate(age_group = case_when(
+    AGE >= 0 & AGE <= 5~ "0-5 years",
+    AGE >= 5.01 & AGE <= 18 ~ "6-18 years",
+    AGE >= 18.01 & AGE <= 30 ~ "19-30 years",
+    AGE >= 30.01 & AGE <= 44 ~ "31-44 years",
+    AGE > 44.01 ~ " 45 years and above"
+  ))
+
+# Add jitter to lat and lon
+df <- df %>%
+  mutate(
+    lat_jittered = lat + runif(n(), -1e-5, 1e-5),
+    lon_jittered = lon + runif(n(), -1e-5, 1e-5)
+  )
+
+df$age_group <- as.factor(df$age_group)
+df$SEX <- as.factor(df$SEX)
+
+# Define coordinates 
+coords <- cbind(df$lat_jittered, df$lon_jittered)
+# Set seed for reproducibility
+set.seed(123)
+
+# Split the data into training (80%) and testing (20%) sets
+trainIndex <- createDataPartition(df$Infections, p = .8, list = FALSE, times = 1)
+trainData <- df[trainIndex,]
+testData <- df[-trainIndex,]
+
+# Split coordinates accordingly
+trainCoords <- coords[trainIndex, ]
+testCoords <- coords[-trainIndex, ]
+
+# Build the mesh for the training data
+mesh_train <- inla.mesh.2d(loc = trainCoords, max.edge = c(0.5, 2), cutoff = 0.1)
+plot(mesh_train)
+# Add points to the plot
+points(trainCoords, col = "red", pch = 19)
+
+spde_train <- inla.spde2.matern(mesh = mesh_train, alpha = 2)
+
+# Generate index set for the mesh using training coordinates
+A_train <- inla.spde.make.A(mesh_train, loc = trainCoords)
+spde_index_train <- inla.spde.make.index(name = "spatial", n.spde = spde_train$n.spde)
+
+# Stack the training data
+stack_train <- inla.stack(
+  data = list(y = trainData$Infections),
+  A = list(A_train, 1),
+  effects = list(spde_index_train, list(trainData))
+)
+
+# Define the formula
+formula <- y ~ SEX + distance + age_group + tempmin + NDVI +
+  mean_humidity + total_precip + population_density + Distance_to_Water_.km. +
+  forest_height + LULC + f(spatial, model = spde_train) + f(month, model = "iid")
+
+# Fit the model on the training data
+result_train <- inla(formula, family = "binomial", 
+                     data = inla.stack.data(stack_train),
+                     control.predictor = list(A = inla.stack.A(stack_train)),
+                     control.compute = list(dic = TRUE, waic = TRUE))
+
+# View results
+summary(result_train)
+
+# Add jitter to lat and lon for the test data
+testData <- testData %>%
+  mutate(
+    lat_jittered = lat + runif(n(), -1e-5, 1e-5),
+    lon_jittered = lon + runif(n(), -1e-5, 1e-5)
+  )
+
+# Create coordinates for the test data
+testCoords <- cbind(testData$lat_jittered, testData$lon_jittered)
+
+# Create the A matrix for the test data using the mesh from the training data
+A_test <- inla.spde.make.A(mesh_train, loc = testCoords)
+
+# Stack the test data
+stack_test <- inla.stack(
+  data = list(y = testData$Infections),
+  A = list(A_test, 1),
+  effects = list(spde_index_train, list(testData))
+)
+
+# Predict on test data using the model from training
+result_test <- inla(formula, family = "binomial", 
+                    data = inla.stack.data(stack_test),
+                    control.predictor = list(A = inla.stack.A(stack_test), compute = TRUE),
+                    control.compute = list(dic = TRUE, waic = TRUE))
+
+# Extract predicted probabilities for test data
+predictions_test <- result_test$summary.fitted.values[1:nrow(testData), "mean"]
+
+# Convert predicted probabilities to binary outcomes for test data
+predicted_classes_test <- ifelse(predictions_test > 0.5, 1, 0)
+
+# Calculate confusion matrix for test data
+conf_matrix_test <- table(Predicted = predicted_classes_test, Actual = testData$Infections)
+
+# Calculate accuracy, precision, and recall for test data
+accuracy_test <- sum(diag(conf_matrix_test)) / sum(conf_matrix_test)
+precision_test <- conf_matrix_test[2, 2] / sum(conf_matrix_test[2, ])  
+recall_test <- conf_matrix_test[2, 2] / sum(conf_matrix_test[, 2])  
+
+# Print results for test data
+cat("Test Confusion Matrix:\n")
+print(conf_matrix_test)
+cat("\nTest Accuracy: ", accuracy_test, "\n")
+cat("Test Precision: ", precision_test, "\n")
+cat("Test Recall: ", recall_test, "\n")
+
+# Create ROC object for test data
+roc_obj_test <- roc(testData$Infections, predictions_test)
+
+# Calculate AUC for test data
+auc_val_test <- auc(roc_obj_test)
+
+# Print AUC for test data
+cat("Test AUC: ", auc_val_test, "\n")
+
+# Plot ROC curve for test data
+plot(roc_obj_test, 
+     main = paste("ROC Curve (AUC =", round(auc_val_test, 2), ")"),
+     col = "blue", 
+     lwd = 2)
+
+````
+
+Lag 8
+````{r}
+df<-read.csv("C:\\Users\\mnzilani\\Desktop\\Working Folder\\New Data\\Lags\\L8.csv")
+
+
+# Create age group variable
+df <- df %>%
+ mutate(age_group = case_when(
+    AGE >= 0 & AGE <= 5~ "0-5 years",
+    AGE >= 5.01 & AGE <= 18 ~ "6-18 years",
+    AGE >= 18.01 & AGE <= 30 ~ "19-30 years",
+    AGE >= 30.01 & AGE <= 44 ~ "31-44 years",
+    AGE > 44.01 ~ " 45 years and above"
+  ))
+
+# Add jitter to lat and lon
+df <- df %>%
+  mutate(
+    lat_jittered = lat + runif(n(), -1e-5, 1e-5),
+    lon_jittered = lon + runif(n(), -1e-5, 1e-5)
+  )
+
+df$age_group <- as.factor(df$age_group)
+df$SEX <- as.factor(df$SEX)
+
+# Define coordinates 
+coords <- cbind(df$lat_jittered, df$lon_jittered)
+# Set seed for reproducibility
+set.seed(123)
+
+# Split the data into training (80%) and testing (20%) sets
+trainIndex <- createDataPartition(df$Infections, p = .8, list = FALSE, times = 1)
+trainData <- df[trainIndex,]
+testData <- df[-trainIndex,]
+
+# Split coordinates accordingly
+trainCoords <- coords[trainIndex, ]
+testCoords <- coords[-trainIndex, ]
+
+# Build the mesh for the training data
+mesh_train <- inla.mesh.2d(loc = trainCoords, max.edge = c(0.5, 2), cutoff = 0.1)
+plot(mesh_train)
+# Add points to the plot
+points(trainCoords, col = "red", pch = 19)
+
+spde_train <- inla.spde2.matern(mesh = mesh_train, alpha = 2)
+
+# Generate index set for the mesh using training coordinates
+A_train <- inla.spde.make.A(mesh_train, loc = trainCoords)
+spde_index_train <- inla.spde.make.index(name = "spatial", n.spde = spde_train$n.spde)
+
+# Stack the training data
+stack_train <- inla.stack(
+  data = list(y = trainData$Infections),
+  A = list(A_train, 1),
+  effects = list(spde_index_train, list(trainData))
+)
+
+# Define the formula
+formula <- y ~ SEX + distance + age_group + tempmin + NDVI +
+  mean_humidity + total_precip + population_density + Distance_to_Water_.km. +
+  forest_height + LULC + f(spatial, model = spde_train) + f(month, model = "iid")
+
+# Fit the model on the training data
+result_train <- inla(formula, family = "binomial", 
+                     data = inla.stack.data(stack_train),
+                     control.predictor = list(A = inla.stack.A(stack_train)),
+                     control.compute = list(dic = TRUE, waic = TRUE))
+
+# View results
+summary(result_train)
+
+# Add jitter to lat and lon for the test data
+testData <- testData %>%
+  mutate(
+    lat_jittered = lat + runif(n(), -1e-5, 1e-5),
+    lon_jittered = lon + runif(n(), -1e-5, 1e-5)
+  )
+
+# Create coordinates for the test data
+testCoords <- cbind(testData$lat_jittered, testData$lon_jittered)
+
+# Create the A matrix for the test data using the mesh from the training data
+A_test <- inla.spde.make.A(mesh_train, loc = testCoords)
+
+# Stack the test data
+stack_test <- inla.stack(
+  data = list(y = testData$Infections),
+  A = list(A_test, 1),
+  effects = list(spde_index_train, list(testData))
+)
+
+# Predict on test data using the model from training
+result_test <- inla(formula, family = "binomial", 
+                    data = inla.stack.data(stack_test),
+                    control.predictor = list(A = inla.stack.A(stack_test), compute = TRUE),
+                    control.compute = list(dic = TRUE, waic = TRUE))
+
+# Extract predicted probabilities for test data
+predictions_test <- result_test$summary.fitted.values[1:nrow(testData), "mean"]
+
+# Convert predicted probabilities to binary outcomes for test data
+predicted_classes_test <- ifelse(predictions_test > 0.5, 1, 0)
+
+# Calculate confusion matrix for test data
+conf_matrix_test <- table(Predicted = predicted_classes_test, Actual = testData$Infections)
+
+# Calculate accuracy, precision, and recall for test data
+accuracy_test <- sum(diag(conf_matrix_test)) / sum(conf_matrix_test)
+precision_test <- conf_matrix_test[2, 2] / sum(conf_matrix_test[2, ])  
+recall_test <- conf_matrix_test[2, 2] / sum(conf_matrix_test[, 2])  
+
+# Print results for test data
+cat("Test Confusion Matrix:\n")
+print(conf_matrix_test)
+cat("\nTest Accuracy: ", accuracy_test, "\n")
+cat("Test Precision: ", precision_test, "\n")
+cat("Test Recall: ", recall_test, "\n")
+
+# Create ROC object for test data
+roc_obj_test <- roc(testData$Infections, predictions_test)
+
+# Calculate AUC for test data
+auc_val_test <- auc(roc_obj_test)
+
+# Print AUC for test data
+cat("Test AUC: ", auc_val_test, "\n")
+
+# Plot ROC curve for test data
+plot(roc_obj_test, 
+     main = paste("ROC Curve (AUC =", round(auc_val_test, 2), ")"),
+     col = "blue", 
+     lwd = 2)
+
+````

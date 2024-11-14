@@ -1,0 +1,590 @@
+---
+title: "Spatial Logistic"
+author: "Maureen Nzilani"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Loading Neccesary Libraries
+````{r}
+library(pROC)
+library(dplyr)
+library(tidyr)
+library(spaMM)
+library(ModelMetrics)
+library(RSpectra)
+library(ROI.plugin.glpk)
+library(sp)
+library(sf)
+library(spdep)
+````
+
+Lag 1
+````{r}
+df<-read.csv("C:\\Users\\mnzilani\\Desktop\\Working Folder\\New Data\\Lags\\L1.csv")
+
+
+# Create age group variable
+df <- df %>%
+  mutate(age_group = case_when(
+    AGE >= 0 & AGE <= 5~ "0-5 years",
+    AGE >= 5.01 & AGE <= 18 ~ "6-18 years",
+    AGE >= 18.01 & AGE <= 30 ~ "19-30 years",
+    AGE >= 30.01 & AGE <= 44 ~ "31-44 years",
+    AGE > 44.01 ~ " 45 years and above"
+  ))
+
+# Add jitter to lat and lon
+df <- df %>%
+  mutate(
+    lat_jittered = lat + runif(n(), -1e-5, 1e-5),
+    lon_jittered = lon + runif(n(), -1e-5, 1e-5)
+  )
+# Check if there are any NA values in the entire dataset
+any_na <- any(is.na(df))
+cat("ANY NA ", any_na, "\n")
+df$age_group <- as.factor(df$age_group)
+df$SEX <- as.factor(df$SEX)
+df$Infections<-as.factor(df$Infections)
+
+
+
+# Split the data into training 
+set.seed(123)  # For reproducibility
+train_indices <- sample(seq_len(nrow(df)), size = 0.8 * nrow(df))
+train_data <- df[train_indices, ]
+test_data <- df[-train_indices, ]
+
+# Fit the model using the training data
+spaMM.options(separation_max = 10)  
+control.HLfit <- list(LevenbergM = TRUE, method = "PQL/L")
+control.HLfit = list(algebra = "decorr")
+spaMM.options(NbThreads = 8)
+
+glm_mod_2_spatial <- spaMM::fitme(Infections ~ SEX + Distance_to_Water_.km. + population_density + NDVI+LULC+
+                                    forest_height + tempmin + mean_humidity + total_precip + 
+                                    age_group + distance + Distance_to_Water_.km. + (1|month)+
+                                    Matern(1 | lat_jittered + lon_jittered), 
+                                  data = train_data, family = binomial(), method = "PQL/L")
+
+# Summarize the model
+summary(glm_mod_2_spatial)
+
+
+# Make predictions on the test set
+test_data$predicted_prob <- predict(glm_mod_2_spatial, newdata = test_data, type = "response")
+test_data$predicted_class <- ifelse(test_data$predicted_prob > 0.5, 1, 0)  
+
+# Calculate performance metrics
+# Confusion Matrix
+confusion_matrix <- table(test_data$Infections, test_data$predicted_class)
+accuracy <- sum(diag(confusion_matrix)) / sum(confusion_matrix)
+# Precision
+precision <- confusion_matrix[2, 2] / sum(confusion_matrix[, 2])
+# Recall
+recall <- confusion_matrix[2, 2] / sum(confusion_matrix[2, ])
+
+# Print performance metrics
+cat("Accuracy: ", accuracy, "\n")
+cat("Precision: ", precision, "\n")
+cat("Recall: ", recall, "\n")
+    
+````
+
+Lag 2
+````{r}
+df<-read.csv("C:\\Users\\mnzilani\\Desktop\\Working Folder\\New Data\\Lags\\L2.csv")
+
+
+# Create age group variable
+df <- df %>%
+  mutate(age_group = case_when(
+    AGE >= 0 & AGE <= 5~ "0-5 years",
+    AGE >= 5.01 & AGE <= 18 ~ "6-18 years",
+    AGE >= 18.01 & AGE <= 30 ~ "19-30 years",
+    AGE >= 30.01 & AGE <= 44 ~ "31-44 years",
+    AGE > 44.01 ~ " 45 years and above"
+  ))
+
+# Add jitter to lat and lon
+df <- df %>%
+  mutate(
+    lat_jittered = lat + runif(n(), -1e-5, 1e-5),
+    lon_jittered = lon + runif(n(), -1e-5, 1e-5)
+  )
+# Check if there are any NA values in the entire dataset
+any_na <- any(is.na(df))
+cat("Any NA ", any_na, "\n")
+df$age_group <- as.factor(df$age_group)
+df$SEX <- as.factor(df$SEX)
+
+
+
+# Split the data into training 
+set.seed(123)  # For reproducibility
+train_indices <- sample(seq_len(nrow(df)), size = 0.8 * nrow(df))
+train_data <- df[train_indices, ]
+test_data <- df[-train_indices, ]
+
+# Fit the model using the training data
+spaMM.options(separation_max = 10)  
+control.HLfit <- list(LevenbergM = TRUE, method = "PQL/L")
+control.HLfit = list(algebra = "decorr")
+spaMM.options(NbThreads = 8)
+
+glm_mod_2_spatial <- spaMM::fitme(Infections ~ SEX + Distance_to_Water_.km. + population_density + NDVI+
+                                    forest_height+LULC + tempmin + mean_humidity + total_precip + 
+                                    age_group + distance + Distance_to_Water_.km. + (1|month)+
+                                    Matern(1 | lat_jittered + lon_jittered), 
+                                  data = train_data, family = binomial(), method = "PQL/L")
+
+# Summarize the model
+summary(glm_mod_2_spatial)
+
+# Make predictions on the test set
+test_data$predicted_prob <- predict(glm_mod_2_spatial, newdata = test_data, type = "response")
+test_data$predicted_class <- ifelse(test_data$predicted_prob > 0.5, 1, 0)  
+
+# Calculate performance metrics
+# Confusion Matrix
+confusion_matrix <- table(test_data$Infections, test_data$predicted_class)
+accuracy <- sum(diag(confusion_matrix)) / sum(confusion_matrix)
+# Precision
+precision <- confusion_matrix[2, 2] / sum(confusion_matrix[, 2])
+# Recall
+recall <- confusion_matrix[2, 2] / sum(confusion_matrix[2, ])
+
+# Print performance metrics
+cat("Accuracy: ", accuracy, "\n")
+cat("Precision: ", precision, "\n")
+cat("Recall: ", recall, "\n")
+       
+````
+
+Lag 3
+````{r}
+df<-read.csv("C:\\Users\\mnzilani\\Desktop\\Working Folder\\New Data\\Lags\\L3.csv")
+
+
+# Create age group variable
+df <- df %>%
+  mutate(age_group = case_when(
+    AGE >= 0 & AGE <= 5~ "0-5 years",
+    AGE >= 5.01 & AGE <= 18 ~ "6-18 years",
+    AGE >= 18.01 & AGE <= 30 ~ "19-30 years",
+    AGE >= 30.01 & AGE <= 44 ~ "31-44 years",
+    AGE > 44.01 ~ " 45 years and above"
+  ))
+
+# Add jitter to lat and lon
+df <- df %>%
+  mutate(
+    lat_jittered = lat + runif(n(), -1e-5, 1e-5),
+    lon_jittered = lon + runif(n(), -1e-5, 1e-5)
+  )
+# Check if there are any NA values in the entire dataset
+any_na <- any(is.na(df))
+cat("ANY NA ", any_na, "\n")
+df$age_group <- as.factor(df$age_group)
+df$SEX <- as.factor(df$SEX)
+
+
+
+# Split the data into training 
+set.seed(123)  # For reproducibility
+train_indices <- sample(seq_len(nrow(df)), size = 0.8 * nrow(df))
+train_data <- df[train_indices, ]
+test_data <- df[-train_indices, ]
+
+# Fit the model using the training data
+spaMM.options(separation_max = 10)  
+control.HLfit <- list(LevenbergM = TRUE, method = "PQL/L")
+control.HLfit = list(algebra = "decorr")
+spaMM.options(NbThreads = 8)
+
+glm_mod_2_spatial <- spaMM::fitme(Infections ~ SEX + Distance_to_Water_.km. + population_density + NDVI+
+                                    forest_height+LULC + tempmin + mean_humidity + total_precip + 
+                                    age_group + distance + Distance_to_Water_.km. + (1|month)+
+                                    Matern(1 | lat_jittered + lon_jittered), 
+                                  data = train_data, family = binomial(), method = "PQL/L")
+
+# Summarize the model
+summary(glm_mod_2_spatial)
+
+# Make predictions on the test set
+test_data$predicted_prob <- predict(glm_mod_2_spatial, newdata = test_data, type = "response")
+test_data$predicted_class <- ifelse(test_data$predicted_prob > 0.5, 1, 0)  
+
+# Calculate performance metrics
+# Confusion Matrix
+confusion_matrix <- table(test_data$Infections, test_data$predicted_class)
+accuracy <- sum(diag(confusion_matrix)) / sum(confusion_matrix)
+
+# Precision
+precision <- confusion_matrix[2, 2] / sum(confusion_matrix[, 2])
+# Recall
+recall <- confusion_matrix[2, 2] / sum(confusion_matrix[2, ])
+
+# Print performance metrics
+cat("Accuracy: ", accuracy, "\n")
+cat("Precision: ", precision, "\n")
+cat("Recall: ", recall, "\n")
+````
+
+Lag 4
+````{r}
+df<-read.csv("C:\\Users\\mnzilani\\Desktop\\Working Folder\\New Data\\Lags\\L4.csv")
+
+
+# Create age group variable
+df <- df %>%
+  mutate(age_group = case_when(
+    AGE >= 0 & AGE <= 5~ "0-5 years",
+    AGE >= 5.01 & AGE <= 18 ~ "6-18 years",
+    AGE >= 18.01 & AGE <= 30 ~ "19-30 years",
+    AGE >= 30.01 & AGE <= 44 ~ "31-44 years",
+    AGE > 44.01 ~ " 45 years and above"
+  ))
+
+# Add jitter to lat and lon
+df <- df %>%
+  mutate(
+    lat_jittered = lat + runif(n(), -1e-5, 1e-5),
+    lon_jittered = lon + runif(n(), -1e-5, 1e-5)
+  )
+# Check if there are any NA values in the entire dataset
+any_na <- any(is.na(df))
+cat("ANY NA ", any_na, "\n")
+df$age_group <- as.factor(df$age_group)
+df$SEX <- as.factor(df$SEX)
+
+
+
+# Split the data into training 
+set.seed(123)  # For reproducibility
+train_indices <- sample(seq_len(nrow(df)), size = 0.8 * nrow(df))
+train_data <- df[train_indices, ]
+test_data <- df[-train_indices, ]
+
+# Fit the model using the training data
+spaMM.options(separation_max = 10)  
+control.HLfit <- list(LevenbergM = TRUE, method = "PQL/L")
+control.HLfit = list(algebra = "decorr")
+spaMM.options(NbThreads = 8)
+
+glm_mod_2_spatial <- spaMM::fitme(Infections ~ SEX + Distance_to_Water_.km. + population_density + NDVI+LULC+
+                                    forest_height + tempmin + mean_humidity + total_precip + 
+                                    age_group + distance + Distance_to_Water_.km. + (1|month)+
+                                    Matern(1 | lat_jittered + lon_jittered), 
+                                  data = train_data, family = binomial(), method = "PQL/L")
+
+# Summarize the model
+summary(glm_mod_2_spatial)
+
+# Make predictions on the test set
+test_data$predicted_prob <- predict(glm_mod_2_spatial, newdata = test_data, type = "response")
+test_data$predicted_class <- ifelse(test_data$predicted_prob > 0.5, 1, 0)  
+
+# Calculate performance metrics
+# Confusion Matrix
+confusion_matrix <- table(test_data$Infections, test_data$predicted_class)
+accuracy <- sum(diag(confusion_matrix)) / sum(confusion_matrix)
+
+# Precision
+precision <- confusion_matrix[2, 2] / sum(confusion_matrix[, 2])
+# Recall
+recall <- confusion_matrix[2, 2] / sum(confusion_matrix[2, ])
+
+# Print performance metrics
+cat("Accuracy: ", accuracy, "\n")
+cat("Precision: ", precision, "\n")
+cat("Recall: ", recall, "\n")
+       
+````
+
+Lag 5
+````{r}
+df<-read.csv("C:\\Users\\mnzilani\\Desktop\\Working Folder\\New Data\\Lags\\L5.csv")
+
+
+# Create age group variable
+df <- df %>%
+  mutate(age_group = case_when(
+    AGE >= 0 & AGE <= 5~ "0-5 years",
+    AGE >= 5.01 & AGE <= 18 ~ "6-18 years",
+    AGE >= 18.01 & AGE <= 30 ~ "19-30 years",
+    AGE >= 30.01 & AGE <= 44 ~ "31-44 years",
+    AGE > 44.01 ~ " 45 years and above"
+  ))
+
+# Add jitter to lat and lon
+df <- df %>%
+  mutate(
+    lat_jittered = lat + runif(n(), -1e-5, 1e-5),
+    lon_jittered = lon + runif(n(), -1e-5, 1e-5)
+  )
+# Check if there are any NA values in the entire dataset
+any_na <- any(is.na(df))
+cat("ANY NA ", any_na, "\n")
+df$age_group <- as.factor(df$age_group)
+df$SEX <- as.factor(df$SEX)
+
+
+
+# Split the data into training 
+set.seed(123)  # For reproducibility
+train_indices <- sample(seq_len(nrow(df)), size = 0.8 * nrow(df))
+train_data <- df[train_indices, ]
+test_data <- df[-train_indices, ]
+
+# Fit the model using the training data
+spaMM.options(separation_max = 10)  
+control.HLfit <- list(LevenbergM = TRUE, method = "PQL/L")
+control.HLfit = list(algebra = "decorr")
+spaMM.options(NbThreads = 8)
+
+glm_mod_2_spatial <- spaMM::fitme(Infections ~ SEX + Distance_to_Water_.km. + population_density + NDVI+
+                                    forest_height + LULC+tempmin + mean_humidity + total_precip + 
+                                    age_group + distance + Distance_to_Water_.km. + (1|month)+
+                                    Matern(1 | lat_jittered + lon_jittered), 
+                                  data = train_data, family = binomial(), method = "PQL/L")
+
+# Summarize the model
+summary(glm_mod_2_spatial)
+
+# Make predictions on the test set
+test_data$predicted_prob <- predict(glm_mod_2_spatial, newdata = test_data, type = "response")
+test_data$predicted_class <- ifelse(test_data$predicted_prob > 0.5, 1, 0)  
+
+# Calculate performance metrics
+# Confusion Matrix
+confusion_matrix <- table(test_data$Infections, test_data$predicted_class)
+accuracy <- sum(diag(confusion_matrix)) / sum(confusion_matrix)
+
+# Precision
+precision <- confusion_matrix[2, 2] / sum(confusion_matrix[, 2])
+# Recall
+recall <- confusion_matrix[2, 2] / sum(confusion_matrix[2, ])
+
+# Print performance metrics
+cat("Accuracy: ", accuracy, "\n")
+cat("Precision: ", precision, "\n")
+cat("Recall: ", recall, "\n")
+     
+````
+
+Lag 6
+````{r}
+df<-read.csv("C:\\Users\\mnzilani\\Desktop\\Working Folder\\New Data\\Lags\\L6.csv")
+
+
+# Create age group variable
+df <- df %>%
+  mutate(age_group = case_when(
+    AGE >= 0 & AGE <= 5~ "0-5 years",
+    AGE >= 5.01 & AGE <= 18 ~ "6-18 years",
+    AGE >= 18.01 & AGE <= 30 ~ "19-30 years",
+    AGE >= 30.01 & AGE <= 44 ~ "31-44 years",
+    AGE > 44.01 ~ " 45 years and above"
+  ))
+
+# Add jitter to lat and lon
+df <- df %>%
+  mutate(
+    lat_jittered = lat + runif(n(), -1e-5, 1e-5),
+    lon_jittered = lon + runif(n(), -1e-5, 1e-5)
+  )
+# Check if there are any NA values in the entire dataset
+any_na <- any(is.na(df))
+cat("ANY NA ", any_na, "\n")
+df$age_group <- as.factor(df$age_group)
+df$SEX <- as.factor(df$SEX)
+
+# Split the data into training 
+set.seed(123)  # For reproducibility
+train_indices <- sample(seq_len(nrow(df)), size = 0.8 * nrow(df))
+train_data <- df[train_indices, ]
+test_data <- df[-train_indices, ]
+
+# Fit the model using the training data
+spaMM.options(separation_max = 10)  
+control.HLfit <- list(LevenbergM = TRUE, method = "PQL/L")
+control.HLfit = list(algebra = "decorr")
+spaMM.options(NbThreads = 8)
+
+glm_mod_2_spatial <- spaMM::fitme(Infections ~ SEX + Distance_to_Water_.km. + population_density + NDVI+
+                                    forest_height+LULC+ + tempmin + mean_humidity + total_precip + 
+                                    age_group + distance + Distance_to_Water_.km. + (1|month)+
+                                    Matern(1 | lat_jittered + lon_jittered), 
+                                  data = train_data, family = binomial(), method = "PQL/L")
+
+# Summarize the model
+summary(glm_mod_2_spatial)
+
+# Make predictions on the test set
+test_data$predicted_prob <- predict(glm_mod_2_spatial, newdata = test_data, type = "response")
+test_data$predicted_class <- ifelse(test_data$predicted_prob > 0.5, 1, 0)  
+
+# Calculate performance metrics
+# Confusion Matrix
+confusion_matrix <- table(test_data$Infections, test_data$predicted_class)
+accuracy <- sum(diag(confusion_matrix)) / sum(confusion_matrix)
+
+# Precision
+precision <- confusion_matrix[2, 2] / sum(confusion_matrix[, 2])
+# Recall
+recall <- confusion_matrix[2, 2] / sum(confusion_matrix[2, ])
+
+# Print performance metrics
+cat("Accuracy: ", accuracy, "\n")
+cat("Precision: ", precision, "\n")
+cat("Recall: ", recall, "\n")
+      
+````
+
+Lag 7
+````{r}
+df<-read.csv("C:\\Users\\mnzilani\\Desktop\\Working Folder\\New Data\\Lags\\L7.csv")
+
+
+# Create age group variable
+df <- df %>%
+  mutate(age_group = case_when(
+    AGE >= 0 & AGE <= 5~ "0-5 years",
+    AGE >= 5.01 & AGE <= 18 ~ "6-18 years",
+    AGE >= 18.01 & AGE <= 30 ~ "19-30 years",
+    AGE >= 30.01 & AGE <= 44 ~ "31-44 years",
+    AGE > 44.01 ~ " 45 years and above"
+  ))
+
+# Add jitter to lat and lon
+df <- df %>%
+  mutate(
+    lat_jittered = lat + runif(n(), -1e-5, 1e-5),
+    lon_jittered = lon + runif(n(), -1e-5, 1e-5)
+  )
+# Check if there are any NA values in the entire dataset
+any_na <- any(is.na(df))
+cat("ANY NA ", any_na, "\n")
+df$age_group <- as.factor(df$age_group)
+df$SEX <- as.factor(df$SEX)
+
+
+
+# Split the data into training 
+set.seed(123)  # For reproducibility
+train_indices <- sample(seq_len(nrow(df)), size = 0.8 * nrow(df))
+train_data <- df[train_indices, ]
+test_data <- df[-train_indices, ]
+
+# Fit the model using the training data
+spaMM.options(separation_max = 10)  
+control.HLfit <- list(LevenbergM = TRUE, method = "PQL/L")
+control.HLfit = list(algebra = "decorr")
+spaMM.options(NbThreads = 8)
+
+glm_mod_2_spatial <- spaMM::fitme(Infections ~ SEX + Distance_to_Water_.km. + population_density + NDVI+
+                                    forest_height+LULC + tempmin + mean_humidity + total_precip + 
+                                    age_group + distance + Distance_to_Water_.km. + (1|month)+
+                                    Matern(1 | lat_jittered + lon_jittered), 
+                                  data = train_data, family = binomial(), method = "PQL/L")
+
+# Summarize the model
+summary(glm_mod_2_spatial)
+
+# Make predictions on the test set
+test_data$predicted_prob <- predict(glm_mod_2_spatial, newdata = test_data, type = "response")
+test_data$predicted_class <- ifelse(test_data$predicted_prob > 0.5, 1, 0)  
+
+# Calculate performance metrics
+# Confusion Matrix
+confusion_matrix <- table(test_data$Infections, test_data$predicted_class)
+accuracy <- sum(diag(confusion_matrix)) / sum(confusion_matrix)
+
+# Precision
+precision <- confusion_matrix[2, 2] / sum(confusion_matrix[, 2])
+# Recall
+recall <- confusion_matrix[2, 2] / sum(confusion_matrix[2, ])
+
+# Print performance metrics
+cat("Accuracy: ", accuracy, "\n")
+cat("Precision: ", precision, "\n")
+cat("Recall: ", recall, "\n")
+  
+````
+
+Lag 8
+````{r}
+df<-read.csv("C:\\Users\\mnzilani\\Desktop\\Working Folder\\New Data\\Lags\\L8.csv")
+
+
+# Create age group variable
+df <- df %>%
+  mutate(age_group = case_when(
+    AGE >= 0 & AGE <= 5~ "0-5 years",
+    AGE >= 5.01 & AGE <= 18 ~ "6-18 years",
+    AGE >= 18.01 & AGE <= 30 ~ "19-30 years",
+    AGE >= 30.01 & AGE <= 44 ~ "31-44 years",
+    AGE > 44.01 ~ " 45 years and above"
+  ))
+
+# Add jitter to lat and lon
+df <- df %>%
+  mutate(
+    lat_jittered = lat + runif(n(), -1e-5, 1e-5),
+    lon_jittered = lon + runif(n(), -1e-5, 1e-5)
+  )
+# Check if there are any NA values in the entire dataset
+any_na <- any(is.na(df))
+cat("ANY NA ", any_na, "\n")
+df$age_group <- as.factor(df$age_group)
+df$SEX <- as.factor(df$SEX)
+
+
+
+# Split the data into training 
+set.seed(123)  # For reproducibility
+train_indices <- sample(seq_len(nrow(df)), size = 0.8 * nrow(df))
+train_data <- df[train_indices, ]
+test_data <- df[-train_indices, ]
+
+# Fit the model using the training data
+spaMM.options(separation_max = 10)  
+control.HLfit <- list(LevenbergM = TRUE, method = "PQL/L")
+control.HLfit = list(algebra = "decorr")
+spaMM.options(NbThreads = 8)
+
+glm_mod_2_spatial <- spaMM::fitme(Infections ~ SEX + Distance_to_Water_.km. + population_density + NDVI+
+                                    forest_height +LULC+ tempmin + mean_humidity + total_precip + 
+                                    age_group + distance + Distance_to_Water_.km. + (1|month)+
+                                    Matern(1 | lat_jittered + lon_jittered), 
+                                  data = train_data, family = binomial(), method = "PQL/L")
+
+# Summarize the model
+summary(glm_mod_2_spatial)
+
+# Make predictions on the test set
+test_data$predicted_prob <- predict(glm_mod_2_spatial, newdata = test_data, type = "response")
+test_data$predicted_class <- ifelse(test_data$predicted_prob > 0.5, 1, 0)  
+
+# Calculate performance metrics
+# Confusion Matrix
+confusion_matrix <- table(test_data$Infections, test_data$predicted_class)
+accuracy <- sum(diag(confusion_matrix)) / sum(confusion_matrix)
+
+
+# Precision
+precision <- confusion_matrix[2, 2] / sum(confusion_matrix[, 2])
+# Recall
+recall <- confusion_matrix[2, 2] / sum(confusion_matrix[2, ])
+
+# Print performance metrics
+cat("Accuracy: ", accuracy, "\n")
+cat("Precision: ", precision, "\n")
+cat("Recall: ", recall, "\n")
+       
+````
