@@ -13,7 +13,7 @@ Required packages:
 
 dplyr (for data manipulation)
 
-tidyr (for data manipulation)
+tidyr (to tidy messy data)
 
 lNLA(for Bayesian modeling)
 
@@ -21,9 +21,9 @@ ggplot2(for visualization)
 
 Metrics( for Evaluation)
 
-sp( for spatial manipulation)
+sp( for classes and methods for spatial data)
 
-caret( for data classification)
+caret( for data classification and regression training)
 
 pROC(for ROC curve and AUC calculations)
 
