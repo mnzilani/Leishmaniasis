@@ -62,8 +62,11 @@ Month( month of infection )
 Workflow
 
 Step 1: Load and Prepare Data
+
 Load the dataset: The script imports a CSV file from a specified path.
+
 Create age groups: Classifies ages into five groups: 0-5 years, 6-18 years, 19-30 years, 31-44 years, and 45 years and above.
+
 Add spatial jittering: This process slightly modifies the latitude and longitude of points by a very small amount (1e-5 degrees) to address issues caused by duplicate coordinates. For example, in cases where multiple individuals are infected in the same village, all individuals would share the exact same geographic coordinates. However, our model doesn’t accept duplicate points. Applying jitter ensures that each individual has a unique set of coordinates while maintaining proximity to the original location. The jitter is small enough (1e-5 degrees) to ensure the points still represent the same village where the infections were recorded.
 
 Step 2: Split Data
