@@ -174,9 +174,12 @@ sklearn.model_selection.GridSearchCV - Hyperparameter tuning using grid search
  There is a peak at the data types of the various features
  
  Correlation analysis is conducted to check the relationship between numerical variables.
+ 
 **Modelling**
 
 1. Eight models are fit to do machine learning analytics. The models are:
+
+
 "Random Forest",
 
 "Decision Tree",
@@ -193,7 +196,8 @@ sklearn.model_selection.GridSearchCV - Hyperparameter tuning using grid search
 
 "Bagging"
 
-3. The features fed as independent variables into the models are:
+2. The features fed as independent variables into the models are:
+   
         "SEX",
    
         "AGE",
@@ -230,14 +234,14 @@ sklearn.model_selection.GridSearchCV - Hyperparameter tuning using grid search
    
    The outcome variable is Infections.
 
-5. The data is scaled and the hot encode is used to convert sex (categorical variable to numerical variable)
-6. The scaled data is then split to training (80%) and test (20%)
-7. The models are then evaluated based on performance metrics: accuracy, precision, F1-score,recall and AUC-ROC
-8. The models are then hyperparamter tuned and the best lag and model selected based on the performance metrics
-9. Seven best models are also selected based on the various performance metrics
-10. SHAP analysis is conducted on the models: Bagging, adaboost. random forest, SVC and logistic regression.
-11. Shap imprtance plots and feature plots are plotted.
-12. The feature plots are broken down based on the classes of the outcome variable.
-13. Hypertuuning of the models is repeated and done in 10 different runs and the best performing model and lag is selected from the 10 runs  
+3. The data is scaled and the hot encode is used to convert sex (categorical variable to numerical variable)
+4. The scaled data is then split to training (80%) and test (20%)
+5. The models are then evaluated based on performance metrics: accuracy, precision, F1-score,recall and AUC-ROC
+6. The models are then hyperparamter tuned and the best lag and model selected based on the performance metrics
+7. Seven best models are also selected based on the various performance metrics
+8. SHAP analysis is conducted on the models: Bagging, adaboost. random forest, SVC and logistic regression.
+9. Shap imprtance plots and feature plots are plotted.
+10. The feature plots are broken down based on the classes of the outcome variable.
+11. Hypertuuning of the models is repeated and done in 10 different runs and the best performing model and lag is selected from the 10 runs  
 
 
